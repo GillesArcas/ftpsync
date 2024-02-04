@@ -4,8 +4,8 @@ import re
 import glob
 import ftplib
 import datetime
+import argparse
 from itertools import pairwise
-from icecream import ic
 
 
 def read_spec(root, liste):
@@ -44,7 +44,6 @@ def list_local(directory, specname):
 
     speclist = read_spec(directory, liste)
     name_list = []
-    # ic(speclist)
     for spec in speclist:
         if os.path.basename(spec) == '*':
             liste = [_ for _ in glob.glob(spec) if os.path.isfile(_)]
@@ -114,6 +113,9 @@ def difference(locdir, project_files, server, user, pwd, remdir):
 
 
 def main_list(local, remote, offsync, missing, extra):
+    if offsync == missing == extra == []:
+        print('Remote is up to date')
+
     if missing:
         print('Missing')
         for fn in missing:
@@ -133,12 +135,14 @@ def main_list(local, remote, offsync, missing, extra):
 
 
 def main_update(ftp, local, remote, offsync, missing, extra, remdir):
+    ftp.cwd(remdir)
+
     if missing:
         print('Copy missing files to server')
         for fn in missing:
-            print('    ', remote[fn]['fullname'])
+            print('    ', local[fn]['fullname'])
             with open(local[fn]['fullname'], 'rb') as f:
-                ftp.storbinary('STOR ' + remote[fn]['fullname'], f)
+                ftp.storbinary('STOR ' + local[fn]['fullname'].replace('\\', '/'), f)
 
     if extra:
         print()
@@ -156,22 +160,37 @@ def main_update(ftp, local, remote, offsync, missing, extra, remdir):
                 ftp.storbinary('STOR ' + remote[fn]['fullname'], f)
 
 
+def parse_command_line():
+    parser = argparse.ArgumentParser(add_help=True, usage=__doc__)
+    xgroup = parser.add_mutually_exclusive_group()
+    xgroup.add_argument('--list', action='store_true', default=False)
+    xgroup.add_argument('--update', action='store_true', default=False)
+    parser.add_argument(action='store', dest='localdir')
+    parser.add_argument(action='store', dest='project')
+    args = parser.parse_args()
+    return parser, args
+
+
 def main():
-    locdir = r'd:\gilles\github.io\voyages\2022-US'
-    project_files = 'project.files'
+    parser, args = parse_command_line()
+
+    locdir = args.localdir
+    project_files = args.project
     server = 'ftp.cluster030.hosting.ovh.net'
     user = 'gilleso'
     pwd = '0slOxHQEl8fkdH3zZWeY'
-    remdir = 'www/voyages/2022-US'
+    remdir = '/www/voyages/2022-US'
 
     local, remote, offsync, missing, extra = difference(locdir, project_files, server, user, pwd, remdir)
 
-    if sys.argv[1] == '--list':
+    if args.list:
         main_list(local, remote, offsync, missing, extra)
-
-    if sys.argv[1] == '--update':
+    elif args.update:
         with ftplib.FTP(server, user, pwd) as ftp:
             main_update(ftp, local, remote, offsync, missing, extra, remdir)
+    else:
+        parser.print_help()
 
 
-main()
+if __name__ == '__main__':
+    main()
