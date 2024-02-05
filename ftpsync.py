@@ -1,3 +1,8 @@
+"""
+Synchonization over FTP. Files to synchronize specified in a file with tree structure.
+"""
+
+
 import sys
 import os
 import re
@@ -17,7 +22,7 @@ def read_spec(root, liste):
         spaces = match[0]
         if len(spaces) % 4 != 0:
             print('indent pas multiple de 4 ligne', iline)
-            exit(1)
+            sys.exit(1)
         levels.append(len(spaces) // 4)
 
     # check positive indent
@@ -39,7 +44,7 @@ def read_spec(root, liste):
 
 
 def list_local(directory, specname):
-    with open(specname) as f:
+    with open(specname, encoding='utf-8') as f:
         liste = f.readlines()
 
     speclist = read_spec(directory, liste)
@@ -102,7 +107,6 @@ def difference(locdir, project_files, server, user, pwd, remdir):
         else:
             descr2 = remote[fn]
             if descr['size'] != descr2['size'] or descr['modify'] > descr2['modify']:
-                # print(fn, 'modifié', descr['size'], descr2['size'], descr['modify'], descr2['modify'])
                 offsync.append(fn)
 
     for fn, descr in remote.items():
@@ -131,33 +135,36 @@ def main_list(local, remote, offsync, missing, extra):
         for fn in offsync:
             loc = local[fn]
             rem = remote[fn]
-            print('    ', fn, f'(size: {loc["size"]} --> {rem["size"]}, {loc["modify"]} --> {rem["modify"]})')
+            print('    ', fn,
+                f'(size: {loc["size"]} --> {rem["size"]},',
+                f'{loc["modify"]} --> {rem["modify"]})')
 
 
-def main_update(ftp, local, remote, offsync, missing, extra, remdir):
-    ftp.cwd(remdir)
+def main_update(local, remote, offsync, missing, extra, server, user, pwd, remotedir):
+    with ftplib.FTP(server, user, pwd) as ftp:
 
-    if missing:
-        print('Copy missing files to server')
-        for fn in missing:
-            print('    ', local[fn]['fullname'])
-            with open(local[fn]['fullname'], 'rb') as f:
-                ftp.storbinary('STOR ' + local[fn]['fullname'].replace('\\', '/'), f)
 
-    if extra:
-        print()
-        print('Removing extra files from server')
-        for fn in extra:
-            print('    ', remote[fn]['fullname'])
-            ftp.delete(remote[fn]['fullname'])
+        if missing:
+            print('Copy missing files to server')
+            for fn in missing:
+                print('    ', local[fn]['fullname'])
+                with open(local[fn]['fullname'], 'rb') as f:
+                    ftp.storbinary(f'STOR {remotedir}/%s' % fn.replace('\\', '/'), f)
 
-    if offsync:
-        print()
-        print('Copy off sync files to server')
-        for fn in offsync:
-            print('    ', remote[fn]['fullname'])
-            with open(local[fn]['fullname'], 'rb') as f:
-                ftp.storbinary('STOR ' + remote[fn]['fullname'], f)
+        if extra:
+            print()
+            print('Removing extra files from server')
+            for fn in extra:
+                print('    ', remote[fn]['fullname'])
+                ftp.delete(remote[fn]['fullname'])
+
+        if offsync:
+            print()
+            print('Copy off sync files to server')
+            for fn in offsync:
+                print('    ', remote[fn]['fullname'])
+                with open(local[fn]['fullname'], 'rb') as f:
+                    ftp.storbinary('STOR ' + remote[fn]['fullname'], f)
 
 
 def parse_command_line():
@@ -167,6 +174,10 @@ def parse_command_line():
     xgroup.add_argument('--update', action='store_true', default=False)
     parser.add_argument(action='store', dest='localdir')
     parser.add_argument(action='store', dest='project')
+    parser.add_argument(action='store', dest='server')
+    parser.add_argument(action='store', dest='user')
+    parser.add_argument(action='store', dest='pwd')
+    parser.add_argument(action='store', dest='remotedir')
     args = parser.parse_args()
     return parser, args
 
@@ -174,20 +185,25 @@ def parse_command_line():
 def main():
     parser, args = parse_command_line()
 
-    locdir = args.localdir
-    project_files = args.project
-    server = 'ftp.cluster030.hosting.ovh.net'
-    user = 'gilleso'
-    pwd = '0slOxHQEl8fkdH3zZWeY'
-    remdir = '/www/voyages/2022-US'
-
-    local, remote, offsync, missing, extra = difference(locdir, project_files, server, user, pwd, remdir)
+    local, remote, offsync, missing, extra = difference(
+        args.localdir,
+        args.project,
+        args.server,
+        args.user,
+        args.pwd,
+        args.remotedir
+    )
 
     if args.list:
         main_list(local, remote, offsync, missing, extra)
     elif args.update:
-        with ftplib.FTP(server, user, pwd) as ftp:
-            main_update(ftp, local, remote, offsync, missing, extra, remdir)
+        main_update(
+            local, remote, offsync, missing, extra,
+            args.server,
+            args.user,
+            args.pwd,
+            args.remotedir
+        )
     else:
         parser.print_help()
 
