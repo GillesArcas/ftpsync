@@ -116,28 +116,29 @@ def difference(locdir, project_files, server, user, pwd, remdir):
     return local, remote, offsync, missing, extra
 
 
-def main_list(local, remote, offsync, missing, extra):
+def main_list(local, remote, offsync, missing, extra, file=None):
     if offsync == missing == extra == []:
         print('Remote is up to date')
 
     if missing:
-        print('Missing')
+        print('Missing', file=file)
         for fn in missing:
-            print('    ', fn)
+            print('    ', fn, file=file)
     if extra:
-        print()
-        print('Extra')
+        print(file=file)
+        print('Extra', file=file)
         for fn in extra:
-            print('    ', fn)
+            print('    ', fn, file=file)
     if offsync:
-        print()
-        print('Off sync')
+        print(file=file)
+        print('Off sync', file=file)
         for fn in offsync:
             loc = local[fn]
             rem = remote[fn]
             print('    ', fn,
                 f'(size: {loc["size"]} --> {rem["size"]},',
-                f'{loc["modify"]} --> {rem["modify"]})')
+                f'{loc["modify"]} --> {rem["modify"]})', 
+                file=file)
 
 
 def main_update(local, remote, offsync, missing, extra, server, user, pwd, remotedir):
