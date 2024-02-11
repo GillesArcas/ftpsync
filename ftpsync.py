@@ -43,6 +43,14 @@ def read_spec(root, liste):
     return speclist
 
 
+def test_connection(server, user, pwd):
+    try:
+        with ftplib.FTP(server, user, pwd) as ftp:
+            return True
+    except:
+        return False
+
+
 def list_local(directory, specname):
     with open(specname, encoding='utf-8') as f:
         liste = f.readlines()
@@ -69,6 +77,15 @@ def list_local(directory, specname):
     return local
 
 
+def list_remote_dir_flat(ftp, directory):
+    full_list = []
+    liste = list(ftp.mlsd(directory))
+    for name, descr in liste:
+        if descr['type'] == 'file':
+            full_list.append((f'{directory}/{name}', descr))
+    return full_list
+
+
 def list_remote_dir(ftp, directory):
     full_list = []
     liste = list(ftp.mlsd(directory))
@@ -82,9 +99,12 @@ def list_remote_dir(ftp, directory):
     return full_list
 
 
-def list_remote(server, user, pwd, directory):
+def list_remote(server, user, pwd, directory, flat:bool=False):
     with ftplib.FTP(server, user, pwd) as ftp:
-        full_list = list_remote_dir(ftp, directory)
+        if flat:
+            full_list = list_remote_dir_flat(ftp, directory)
+        else:
+            full_list = list_remote_dir(ftp, directory)
 
     remote = {}
     for fn, descr in full_list:
@@ -94,9 +114,9 @@ def list_remote(server, user, pwd, directory):
     return remote
 
 
-def difference(locdir, project_files, server, user, pwd, remdir):
+def difference(locdir, project_files, server, user, pwd, remdir, flat:bool=False):
     local = list_local(locdir, project_files)
-    remote = list_remote(server, user, pwd, remdir)
+    remote = list_remote(server, user, pwd, remdir, flat)
 
     offsync = []
     missing = []
@@ -137,13 +157,12 @@ def main_list(local, remote, offsync, missing, extra, file=None):
             rem = remote[fn]
             print('    ', fn,
                 f'(size: {loc["size"]} --> {rem["size"]},',
-                f'{loc["modify"]} --> {rem["modify"]})', 
+                f'{loc["modify"]} --> {rem["modify"]})',
                 file=file)
 
 
 def main_update(local, remote, offsync, missing, extra, server, user, pwd, remotedir):
     with ftplib.FTP(server, user, pwd) as ftp:
-
 
         if missing:
             print('Copy missing files to server')
@@ -179,6 +198,7 @@ def parse_command_line():
     parser.add_argument(action='store', dest='user')
     parser.add_argument(action='store', dest='pwd')
     parser.add_argument(action='store', dest='remotedir')
+    parser.add_argument(action='store', dest='flat', nargs='?', choices=('flat', 'rec'), default='rec')
     args = parser.parse_args()
     return parser, args
 
@@ -192,7 +212,8 @@ def main():
         args.server,
         args.user,
         args.pwd,
-        args.remotedir
+        args.remotedir,
+        args.flat == 'flat'
     )
 
     if args.list:
