@@ -18,7 +18,7 @@ from functools import cache
 from icecream import ic
 
 
-DIFF = r"c:\Program Files\WinMerge\WinMergeU.exe"
+DIFF = r'"c:\Program Files\WinMerge\WinMergeU.exe"'
 
 
 @cache
