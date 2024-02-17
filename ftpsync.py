@@ -1,46 +1,37 @@
 """
-Synchonization over FTP. Files to synchronize specified in a file with tree structure.
+Synchonization over FTP. Files to synchronize specified in a list of file specifications.
 """
 
 
-import sys
 import os
 import re
 import glob
 import ftplib
 import datetime
 import argparse
-from itertools import pairwise
+import configparser
+import hashlib
+import io
+import tempfile
+from functools import cache
+
+from icecream import ic
+
+
+DIFF = r"c:\Program Files\WinMerge\WinMergeU.exe"
+
+
+@cache
+def cachedir():
+    tempdir = tempfile.gettempdir()
+    cache_dir = os.path.join(tempdir, 'ftpsync')
+    if not os.path.exists(cache_dir):
+        os.makedirs(cache_dir)
+    return cache_dir
 
 
 def read_spec(root, liste):
-    speclist = []
-    # check indentation and store levels
-    levels = []
-    for iline, line in enumerate(liste, 1):
-        match = re.match(r' *', line)
-        spaces = match[0]
-        if len(spaces) % 4 != 0:
-            print('indent pas multiple de 4 ligne', iline)
-            sys.exit(1)
-        levels.append(len(spaces) // 4)
-
-    # check positive indent
-    for iline, (level1, level2) in enumerate(pairwise(levels), 1):
-        if level2 > level1 and level2 - level1 > 1:
-            print('trop indentation ligne', iline + 1)
-
-    path = [root]
-    for iline, (line, linelevel) in enumerate(zip(liste, levels)):
-        spec = line.strip()
-        path = path[:linelevel + 1]
-        if iline < len(liste) - 1 and levels[iline + 1] == linelevel + 1:
-            # current line is directory
-            path.append(spec)
-        else:
-            # current line is file
-            speclist.append(os.path.join(*path, spec))
-    return speclist
+    return [os.path.join(root, line) for line in liste]
 
 
 def test_connection(server, user, pwd):
@@ -51,11 +42,9 @@ def test_connection(server, user, pwd):
         return False
 
 
-def list_local(directory, specname):
-    with open(specname, encoding='utf-8') as f:
-        liste = f.readlines()
-
-    speclist = read_spec(directory, liste)
+def list_local(directory, spec):
+    speclist = read_spec(directory, spec)
+    ic(speclist)
     name_list = []
     for spec in speclist:
         if os.path.basename(spec) == '*':
@@ -65,7 +54,6 @@ def list_local(directory, specname):
         else:
             liste = glob.glob(spec)
         name_list.extend(liste)
-
 
     local = {}
     for fn in name_list:
@@ -78,6 +66,7 @@ def list_local(directory, specname):
 
 
 def list_remote_dir_flat(ftp, directory):
+    ic(directory)
     full_list = []
     liste = list(ftp.mlsd(directory))
     for name, descr in liste:
@@ -99,7 +88,8 @@ def list_remote_dir(ftp, directory):
     return full_list
 
 
-def list_remote(server, user, pwd, directory, flat:bool=False):
+def list_remote_one(server, user, pwd, directory, basedir, flat:bool=False):
+    ic(basedir)
     with ftplib.FTP(server, user, pwd) as ftp:
         if flat:
             full_list = list_remote_dir_flat(ftp, directory)
@@ -108,15 +98,49 @@ def list_remote(server, user, pwd, directory, flat:bool=False):
 
     remote = {}
     for fn, descr in full_list:
-        relname = os.path.relpath(fn, directory)
+        relname = os.path.relpath(fn, basedir)
         remote[relname] = {'size': int(descr['size']), 'modify': descr['modify'], 'fullname': fn}
 
     return remote
 
 
-def difference(locdir, project_files, server, user, pwd, remdir, flat:bool=False):
+def list_remote(server, user, pwd, remspec):
+    """
+    `remspec` is a list of paths separated with "|". If a path is terminated
+    with * (by default), its sub directories are ignored. If a path is terminated
+    with **, its sub directories are scanned recursively. The paths of returned
+    files are given relatively to first path in `remspec`.
+    """
+    baseremdir = re.sub(r'/\*+', '', remspec.split('|')[0])
+    ic(baseremdir)
+    remote = {}
+    for remdir in remspec.split('|'):
+        flat = not remdir.endswith('/**')
+        remdir = re.sub(r'/\*+', '', remdir)
+        ic(flat, remdir)
+        remote.update(list_remote_one(server, user, pwd, remdir, baseremdir, flat))
+    return remote
+
+
+def compare_hashcode(locfn, remfn, server, user, pwd):
+    with open(locfn, 'rb') as f:
+        locmd5 = hashlib.md5(f.read()).hexdigest()
+
+    with ftplib.FTP(server, user, pwd) as ftp:
+        with io.BytesIO() as fp:
+            ftp.retrbinary(f'RETR {remfn}', fp.write)
+            remmd5 = hashlib.md5(fp.getvalue()).hexdigest()
+
+    print(os.path.basename(locfn), locmd5, remmd5)
+    return locmd5 == remmd5
+
+
+def difference(locdir, project_files, server, user, pwd, remspec):
+    print(project_files)
     local = list_local(locdir, project_files)
-    remote = list_remote(server, user, pwd, remdir, flat)
+    remote = list_remote(server, user, pwd, remspec)
+    # ic(local.keys())
+    # ic(remote.keys())
 
     offsync = []
     missing = []
@@ -126,7 +150,18 @@ def difference(locdir, project_files, server, user, pwd, remdir, flat:bool=False
             missing.append(fn)
         else:
             descr2 = remote[fn]
-            if descr['size'] != descr2['size'] or descr['modify'] > descr2['modify']:
+            if descr['size'] == descr2['size'] and descr['modify'] <= descr2['modify']:
+                # no doubts
+                pass
+            elif descr['size'] == descr2['size']:
+                if 1 or fn.endswith('.html'):
+                    if compare_hashcode(descr["fullname"], descr2["fullname"], server, user, pwd):
+                        pass
+                    else:
+                        offsync.append(fn)
+                else:
+                    offsync.append(fn)
+            else:
                 offsync.append(fn)
 
     for fn, descr in remote.items():
@@ -136,7 +171,23 @@ def difference(locdir, project_files, server, user, pwd, remdir, flat:bool=False
     return local, remote, offsync, missing, extra
 
 
-def main_list(local, remote, offsync, missing, extra, file=None):
+def user_check(local, remote, offsync, server, user, pwd):
+    prompt = '[' + ', '.join(['q'] + [str(_) for _ in range(1, len(offsync) + 1)]) + '] ? '
+    while 1:
+        inpt = input(prompt)
+        if inpt == 'q':
+            break
+        fn = offsync[int(inpt) - 1]
+        loc = local[fn]
+        rem = remote[fn]
+        with ftplib.FTP(server, user, pwd) as ftp:
+            dnload = os.path.join(cachedir(), os.path.basename(fn))
+            with open(dnload, 'wb') as fp:
+                ftp.retrbinary('RETR %s' % rem['fullname'], fp.write)
+        os.system(f'{DIFF} {loc["fullname"]} {dnload}')
+
+
+def main_list(local, remote, offsync, missing, extra, server, user, pwd, file=None):
     if offsync == missing == extra == []:
         print('Remote is up to date')
 
@@ -152,13 +203,14 @@ def main_list(local, remote, offsync, missing, extra, file=None):
     if offsync:
         print(file=file)
         print('Off sync', file=file)
-        for fn in offsync:
+        for index, fn in enumerate(offsync, 1):
             loc = local[fn]
             rem = remote[fn]
-            print('    ', fn,
+            print('    ', index, fn,
                 f'(size: {loc["size"]} --> {rem["size"]},',
                 f'{loc["modify"]} --> {rem["modify"]})',
                 file=file)
+        user_check(local, remote, offsync, server, user, pwd)
 
 
 def main_update(local, remote, offsync, missing, extra, server, user, pwd, remotedir):
@@ -194,12 +246,23 @@ def parse_command_line():
     xgroup.add_argument('--update', action='store_true', default=False)
     parser.add_argument(action='store', dest='localdir')
     parser.add_argument(action='store', dest='project')
-    parser.add_argument(action='store', dest='server')
-    parser.add_argument(action='store', dest='user')
-    parser.add_argument(action='store', dest='pwd')
-    parser.add_argument(action='store', dest='remotedir')
-    parser.add_argument(action='store', dest='flat', nargs='?', choices=('flat', 'rec'), default='rec')
     args = parser.parse_args()
+
+    config = configparser.ConfigParser(
+        delimiters='=',
+        interpolation=configparser.ExtendedInterpolation()
+    )
+    config.read(args.project)
+
+    args.server = config.get('ftp', 'server', fallback=None)
+    args.user = config.get('ftp', 'user', fallback=None)
+    args.remotedir = config.get('ftp', 'remotedir', fallback=None)
+    x = config.get('ftp', 'project', fallback=None)
+    args.project = [re.sub(r' *\|', '', line) for line in x.strip().splitlines()]
+    # ftp pwd entered by user
+    args.pwd = None
+    args.pwd = input('FTP password: ')
+
     return parser, args
 
 
@@ -212,12 +275,11 @@ def main():
         args.server,
         args.user,
         args.pwd,
-        args.remotedir,
-        args.flat == 'flat'
+        args.remotedir
     )
 
     if args.list:
-        main_list(local, remote, offsync, missing, extra)
+        main_list(local, remote, offsync, missing, extra, args.server, args.user, args.pwd)
     elif args.update:
         main_update(
             local, remote, offsync, missing, extra,
