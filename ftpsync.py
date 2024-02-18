@@ -258,7 +258,7 @@ def parse_command_line():
     args.user = config.get('ftp', 'user', fallback=None)
     args.remotedir = config.get('ftp', 'remotedir', fallback=None)
     x = config.get('ftp', 'project', fallback=None)
-    args.project = [re.sub(r' *\|', '', line) for line in x.strip().splitlines()]
+    args.project = [line for line in x.strip().splitlines()]
     # ftp pwd entered by user
     args.pwd = None
     args.pwd = input('FTP password: ')
