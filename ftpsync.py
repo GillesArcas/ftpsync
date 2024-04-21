@@ -221,6 +221,7 @@ def main_update(local, remote, offsync, missing, extra, server, user, pwd, remot
             for fn in missing:
                 print('    ', local[fn]['fullname'])
                 with open(local[fn]['fullname'], 'rb') as f:
+                    print(f'STOR {remotedir}/%s' % fn.replace('\\', '/'), f)
                     ftp.storbinary(f'STOR {remotedir}/%s' % fn.replace('\\', '/'), f)
 
         if extra:
