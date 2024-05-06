@@ -136,7 +136,8 @@ def compare_hashcode(locfn, remfn, server, user, pwd):
 
 
 def difference(locdir, project_files, server, user, pwd, remspec):
-    print(project_files)
+    ic(project_files)
+    ic(remspec)
     local = list_local(locdir, project_files)
     remote = list_remote(server, user, pwd, remspec)
     # ic(local.keys())
@@ -213,16 +214,39 @@ def main_list(local, remote, offsync, missing, extra, server, user, pwd, file=No
         user_check(local, remote, offsync, server, user, pwd)
 
 
+def check_remote_tree(remote, project_files, server, user, pwd, remspec):
+    baseremdir = re.sub(r'/\*+', '', remspec.split('|')[0])
+
+    with ftplib.FTP(server, user, pwd) as ftp:
+        for directory in baseremdir.split('/'):
+            try:
+                ftp.cwd(directory)
+            except:
+                ftp.mkd(directory)
+                ftp.cwd(directory)
+
+        for spec in project_files:
+            ftp.cwd(baseremdir)
+            for directory in re.split(r'\\|/', os.path.dirname(spec)):
+                try:
+                    ftp.cwd(directory)
+                except:
+                    ftp.mkd(directory)
+                    ftp.cwd(directory)
+        ftp.cwd('/')
+
+
 def main_update(local, remote, offsync, missing, extra, server, user, pwd, remotedir):
     with ftplib.FTP(server, user, pwd) as ftp:
 
         if missing:
             print('Copy missing files to server')
+            baseremdir = re.sub(r'/\*+', '', remotedir.split('|')[0])
             for fn in missing:
                 print('    ', local[fn]['fullname'])
                 with open(local[fn]['fullname'], 'rb') as f:
-                    print(f'STOR {remotedir}/%s' % fn.replace('\\', '/'), f)
-                    ftp.storbinary(f'STOR {remotedir}/%s' % fn.replace('\\', '/'), f)
+                    print(f'STOR {baseremdir}/%s' % fn.replace('\\', '/'), f)
+                    ftp.storbinary(f'STOR {baseremdir}/%s' % fn.replace('\\', '/'), f)
 
         if extra:
             print()
@@ -282,6 +306,14 @@ def main():
     if args.list:
         main_list(local, remote, offsync, missing, extra, args.server, args.user, args.pwd)
     elif args.update:
+        check_remote_tree(
+        remote,
+        args.project,
+        args.server,
+        args.user,
+        args.pwd,
+        args.remotedir
+        )
         main_update(
             local, remote, offsync, missing, extra,
             args.server,
